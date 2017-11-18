@@ -208,6 +208,7 @@ Autopilot_Interface(Serial_Port *serial_port_)
 	current_messages.compid = autopilot_id;
 
 	serial_port = serial_port_; // serial port management object
+	imu_counter = 0;
 
 }
 
@@ -340,6 +341,8 @@ read_messages()
 					mavlink_msg_highres_imu_decode(&message, &(current_messages.highres_imu));
 					current_messages.time_stamps.highres_imu = get_time_usec();
 					this_timestamps.highres_imu = current_messages.time_stamps.highres_imu;
+
+					imu_counter++;
 					break;
 				}
 
@@ -379,7 +382,7 @@ read_messages()
 
 		// give the write thread time to use the port
 		if ( writing_status > false ) {
-			usleep(100); // look for components of batches at 10kHz
+			//usleep(1); // look for components of batches at 10kHz
 		}
 
 	} // end: while not received all

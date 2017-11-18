@@ -71,20 +71,32 @@ using namespace std;
 
 #include "autopilot_interface.h"
 #include "serial_port.h"
+#include "configParam.h"
 
 
 // ------------------------------------------------------------------------------
 //   Prototypes
 // ------------------------------------------------------------------------------
 
-int main(int argc, char **argv);
-int top(int argc, char **argv);
+class Mavlink_Control {
+public:
+    Mavlink_Control();
+    Mavlink_Control(ConfigParam *configParam);
+    ~Mavlink_Control();
 
-void commands(Autopilot_Interface &autopilot_interface);
-void parse_commandline(int argc, char **argv, char *&uart_name, int &baudrate);
+    void start();
+    void stop();
+
+    void commands();
+    void parse_commandline(int argc, char **argv, char *&uart_name, int &baudrate);
 
 // quit handler
-Autopilot_Interface *autopilot_interface_quit;
-Serial_Port *serial_port_quit;
-void quit_handler( int sig );
+    Autopilot_Interface *autopilot_interface_quit;
+    Serial_Port *serial_port_quit;
+    void quit_handler( int sig );
+private:
+    Serial_Port *serial_port;
+    Autopilot_Interface *autopilot_interface;
+};
+
 

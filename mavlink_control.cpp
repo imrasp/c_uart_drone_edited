@@ -55,30 +55,7 @@
 
 #include "mavlink_control.h"
 
-
-// ------------------------------------------------------------------------------
-//   TOP
-// ------------------------------------------------------------------------------
-int
-top (int argc, char **argv)
-{
-
-	// --------------------------------------------------------------------------
-	//   PARSE THE COMMANDS
-	// --------------------------------------------------------------------------
-
-	// Default input arguments
-#ifdef __APPLE__
-	char *uart_name = (char*)"/dev/tty.usbmodem1";
-#else
-	char *uart_name = (char*)"/dev/ttyUSB0";
-#endif
-	int baudrate = 57600;
-
-	// do the parse, will throw an int if it fails
-	parse_commandline(argc, argv, uart_name, baudrate);
-
-
+Mavlink_Control::Mavlink_Control(ConfigParam *configParam){
 	// --------------------------------------------------------------------------
 	//   PORT and THREAD STARTUP
 	// --------------------------------------------------------------------------
@@ -93,7 +70,7 @@ top (int argc, char **argv)
 	 * pthread mutex lock.
 	 *
 	 */
-	Serial_Port serial_port(uart_name, baudrate);
+	serial_port = new Serial_Port(configParam->uart_name, configParam->baudrate);
 
 
 	/*
@@ -111,7 +88,7 @@ top (int argc, char **argv)
 	 * otherwise the vehicle will go into failsafe.
 	 *
 	 */
-	Autopilot_Interface autopilot_interface(&serial_port);
+	autopilot_interface = new Autopilot_Interface(serial_port);
 
 	/*
 	 * Setup interrupt signal handler
@@ -121,17 +98,19 @@ top (int argc, char **argv)
 	 * The handler in this example needs references to the above objects.
 	 *
 	 */
-	serial_port_quit         = &serial_port;
-	autopilot_interface_quit = &autopilot_interface;
-	signal(SIGINT,quit_handler);
+	serial_port_quit         = serial_port;
+	autopilot_interface_quit = autopilot_interface;
+}
+Mavlink_Control::~Mavlink_Control(){
+}
 
+void Mavlink_Control::start(){
 	/*
 	 * Start the port and autopilot_interface
 	 * This is where the port is opened, and read and write threads are started.
 	 */
-	serial_port.start();
-	autopilot_interface.start();
-
+	serial_port->start();
+	autopilot_interface->start();
 
 	// --------------------------------------------------------------------------
 	//   RUN COMMANDS
@@ -140,9 +119,10 @@ top (int argc, char **argv)
 	/*
 	 * Now we can implement the algorithm we want on top of the autopilot interface
 	 */
-	commands(autopilot_interface);
+	commands();
+}
 
-
+void Mavlink_Control::stop(){
 	// --------------------------------------------------------------------------
 	//   THREAD and PORT SHUTDOWN
 	// --------------------------------------------------------------------------
@@ -150,33 +130,24 @@ top (int argc, char **argv)
 	/*
 	 * Now that we are done we can stop the threads and close the port
 	 */
-	autopilot_interface.stop();
-	serial_port.stop();
-
-
-	// --------------------------------------------------------------------------
-	//   DONE
-	// --------------------------------------------------------------------------
-
-	// woot!
-	return 0;
+	autopilot_interface->stop();
+	serial_port->stop();
 
 }
-
 
 // ------------------------------------------------------------------------------
 //   COMMANDS
 // ------------------------------------------------------------------------------
 
 void
-commands(Autopilot_Interface &api)
+Mavlink_Control::commands()
 {
 
 	// --------------------------------------------------------------------------
 	//   START OFFBOARD MODE
 	// --------------------------------------------------------------------------
 
-	api.enable_offboard_control();
+	autopilot_interface->enable_offboard_control();
 	usleep(100); // give some time to let it sink in
 
 	// now the autopilot is accepting setpoint commands
@@ -189,7 +160,8 @@ commands(Autopilot_Interface &api)
 
 	// initialize command data strtuctures
 	mavlink_set_position_target_local_ned_t sp;
-	mavlink_set_position_target_local_ned_t ip = api.initial_position;
+	mavlink_set_position_target_local_ned_t ip = autopilot_interface->
+initial_position;
 
 	// autopilot_interface.h provides some helper functions to build the command
 
@@ -212,17 +184,17 @@ commands(Autopilot_Interface &api)
 			 sp     );
 
 	// SEND THE COMMAND
-	api.update_setpoint(sp);
+	autopilot_interface->update_setpoint(sp);
 	// NOW pixhawk will try to move
 
-	// Wait for 8 seconds, check position
-	for (int i=0; i < 8; i++)
+	// Wait for 10 seconds, check position
+	for (int i=0; i < 60; i++)
 	{
-		mavlink_local_position_ned_t pos = api.current_messages.local_position_ned;
+		mavlink_local_position_ned_t pos = autopilot_interface->current_messages.local_position_ned;
 		printf("%i CURRENT POSITION XYZ = [ % .4f , % .4f , % .4f ] \n", i, pos.x, pos.y, pos.z);
 		sleep(1);
 	}
-
+	sleep(60);
 	printf("\n");
 
 
@@ -230,7 +202,7 @@ commands(Autopilot_Interface &api)
 	//   STOP OFFBOARD MODE
 	// --------------------------------------------------------------------------
 
-	api.disable_offboard_control();
+	autopilot_interface->disable_offboard_control();
 
 	// now pixhawk isn't listening to setpoint commands
 
@@ -241,7 +213,7 @@ commands(Autopilot_Interface &api)
 	printf("READ SOME MESSAGES \n");
 
 	// copy current messages
-	Mavlink_Messages messages = api.current_messages;
+	Mavlink_Messages messages = autopilot_interface->current_messages;
 
 	// local position in ned frame
 	mavlink_local_position_ned_t pos = messages.local_position_ned;
@@ -261,6 +233,7 @@ commands(Autopilot_Interface &api)
 
 	printf("\n");
 
+	std::cout << "\n \n total number of IMU is : " << autopilot_interface->imu_counter << std::endl;
 
 	// --------------------------------------------------------------------------
 	//   END OF COMMANDS
@@ -270,63 +243,12 @@ commands(Autopilot_Interface &api)
 
 }
 
-
-// ------------------------------------------------------------------------------
-//   Parse Command Line
-// ------------------------------------------------------------------------------
-// throws EXIT_FAILURE if could not open the port
-void
-parse_commandline(int argc, char **argv, char *&uart_name, int &baudrate)
-{
-
-	// string for command line usage
-	const char *commandline_usage = "usage: mavlink_serial -d <devicename> -b <baudrate>";
-
-	// Read input arguments
-	for (int i = 1; i < argc; i++) { // argv[0] is "mavlink"
-
-		// Help
-		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-			printf("%s\n",commandline_usage);
-			throw EXIT_FAILURE;
-		}
-
-		// UART device ID
-		if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--device") == 0) {
-			if (argc > i + 1) {
-				uart_name = argv[i + 1];
-
-			} else {
-				printf("%s\n",commandline_usage);
-				throw EXIT_FAILURE;
-			}
-		}
-
-		// Baud rate
-		if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--baud") == 0) {
-			if (argc > i + 1) {
-				baudrate = atoi(argv[i + 1]);
-
-			} else {
-				printf("%s\n",commandline_usage);
-				throw EXIT_FAILURE;
-			}
-		}
-
-	}
-	// end: for each input argument
-
-	// Done!
-	return;
-}
-
-
 // ------------------------------------------------------------------------------
 //   Quit Signal Handler
 // ------------------------------------------------------------------------------
 // this function is called when you press Ctrl-C
 void
-quit_handler( int sig )
+Mavlink_Control::quit_handler( int sig )
 {
 	printf("\n");
 	printf("TERMINATING AT USER REQUEST\n");
@@ -346,28 +268,6 @@ quit_handler( int sig )
 
 	// end program here
 	exit(0);
-
-}
-
-
-// ------------------------------------------------------------------------------
-//   Main
-// ------------------------------------------------------------------------------
-int
-main(int argc, char **argv)
-{
-	// This program uses throw, wrap one big try/catch here
-	try
-	{
-		int result = top(argc,argv);
-		return result;
-	}
-
-	catch ( int error )
-	{
-		fprintf(stderr,"mavlink_control threw exception %i \n" , error);
-		return error;
-	}
 
 }
 

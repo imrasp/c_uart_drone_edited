@@ -272,6 +272,8 @@ public:
 
 	void handle_quit( int sig );
 
+	int imu_counter;
+
 
 private:
 
